@@ -1,0 +1,70 @@
+---
+title: "Model Building and Variable Selection & cross validation"
+author: Keming zhan
+date: 10/12/2021
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(corrplot)
+library(leaps)
+
+```
+
+Before model selection, variable beds and docs are removed due to high collinearity.
+
+## Exploratory Analysis
+
+```{r}
+# read data 
+data_df=read.csv("./data/cdi.csv") %>% 
+  mutate(CRM_1000=crimes/pop*1000) %>%  
+  select(-crimes,-docs) %>% 
+  select(-id,-cty,-state) %>%
+  mutate(region=as.factor(region))
+  
+  
+ # stepwise model selection
+ 
+ mult.fit = lm(CRM_1000 ~ ., data = data_df)
+
+
+ step(mult.fit, direction = 'both')
+ step(mult.fit, direction = 'forward')
+ step(mult.fit, direction = 'backward')
+
+ 
+ 
+ # pop18,poverty,pcincome,totalincome and region(5 variables) are included in the model after stepwise selection.
+
+
+ 
+ 
+ 
+ 
+ # cross validation
+ 
+library(tidyverse)
+library(caret)
+
+train = trainControl(method = "cv", number = 5)
+
+
+model_cdi = train(CRM_1000 ~ pop18 + poverty + pcincome + totalinc + region,
+                   data = data_df,
+                   trControl = train,
+                   method = 'lm',
+                   na.action = na.pass)
+
+model_cdi$finalModel
+print(model_cdi)
+
+
+```
+
+
+
+

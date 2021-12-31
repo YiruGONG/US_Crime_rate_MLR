@@ -1,0 +1,509 @@
+---
+title: "Final_code"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(corrplot)
+library(leaps)
+library(car)
+library(caret)
+library(MASS)
+library(performance)
+```
+
+## Four assumptions associated with a linear regression:
+
+1.Linearity: The relationship between X and the mean of Y is linear.
+
+2.Homoscedasticity: The variance of residual is the same for any value of X.
+                    We can test this assumption later, after fitting the linear model.
+
+3.Independence: Observations are independent of each other.
+
+4.Normality: For any fixed value of X, Y is normally distributed.
+
+# Data import and clean
+
+```{r}
+data_df=read.csv("./data/cdi.csv") %>% 
+  mutate(CRM_1000=crimes/pop*1000) %>%  ## add new variable CRM_1000(the crime rate per 1,000 population)
+  dplyr::select(-crimes) %>% 
+  dplyr::select(-id,-cty,-state) %>% 
+  mutate(region=as.factor(region))
+```
+
+## Visualization: TWO tables of 14  variables
+
+```{r include=F}
+numeric_variable_tb=tibble(Variable=c("area","pop","pop18","pop65","docs","beds","hsgrad","bagrad","poverty","unemp","pcincome","totalinc","CRM_1000"),
+                   mean=c(1041,393011,28.6,12.2,988,1459,77.6,21.1,8.72,6.60,18561,7869,57.3),
+                   sd=c(1550,601987,4.19,3.99,1790,2289,7.02,7.65,4.66,2.34,4059,12884,27.3)) %>%knitr::kable(digit=2,caption="A Table for Numeric Variables")
+
+factor_variable_tb=tibble(region=c("1 ( Northeast )","2 ( North central )","3 ( South )","4 ( West )"),
+                          Frequency=c(103,108,152,77)) %>% knitr::kable(caption="A Frequency Table")
+```
+
+```{r}
+numeric_variable_tb
+factor_variable_tb
+## describe(data_df)
+```
+
+## Checking outliers using boxplots
+
+boxplot for each continuous variable
+
+```{r fig.width=8,fig.height=8}
+par(mfrow=c(4,4))
+boxplot(data_df$area,main='Land area measured in square miles')
+boxplot(data_df$pop,main='Total population in 1990')
+boxplot(data_df$pop18,main='Percent of population aged 18-34')
+boxplot(data_df$pop65,main='Percent of populationß aged 65+')
+boxplot(data_df$docs,main='Number of active physicians')
+boxplot(data_df$beds,main='Number of hospital beds')
+boxplot(data_df$hsgrad,main='Percent high school graduates')
+boxplot(data_df$bagrad,main='Percent bachelor’s degrees')
+boxplot(data_df$poverty,main='Percent of 1990 total population with income below poverty level')
+boxplot(data_df$unemp,main='Percent below poverty level')
+boxplot(data_df$pcincome,main='Per capita income')
+boxplot(data_df$totalinc,main='Total personal income')
+boxplot(data_df$CRM_1000,main='The crime rate per 1,000 population')
+```
+
+## histogram(distribution of 12 independent numeric variables)
+
+```{r fig.width=8,fig.height=7}
+data_without_region_df=
+  data_df %>% dplyr::select(-region,-CRM_1000) ## since histogram cannot be plotted using a factor variable, we delete the variable region. 
+
+par(mfrow=c(4,3))
+
+for (n in 1:ncol(data_without_region_df)){
+  var = names(data_without_region_df)[n]
+  hist(data_without_region_df[,n],xlab = var,main=str_c("Distribution of"," variabe ",var))
+}
+
+```
+
+from 12 histograms of each numeric variable, we notice the distribution of 5 histograms are right-skewed, therefore, we need to perform log transformation for these five variables(area,pop,docs,beds and totalinc)
+
+## log transformation for five variables whose distribution is right-skewed 
+
+```{r}
+data_df = data_df %>% 
+  mutate(log_area = log(area),
+         log_pop = log(pop),
+         log_docs = log(docs),
+         log_beds = log(beds),
+         log_totalinc = log(totalinc)
+         ) %>% 
+  dplyr::select(-pop,-area,-docs,-beds,-totalinc) 
+```
+
+## Re-check distribution of independent variables
+
+```{r fig.width = 8, fig.height=7}
+data_without_region_log_CRM1000_df=
+  data_df %>% dplyr::select(-region,-CRM_1000)
+
+## histogram after transformation
+par(mfrow=c(4,3))
+for (n in 1:ncol(data_without_region_log_CRM1000_df)){
+  var = names(data_without_region_log_CRM1000_df[n])
+  hist(data_without_region_log_CRM1000_df[,n],xlab = var,main=str_c("Distribution of"," variabe ",var))
+}
+
+```
+
+After log transformation, in histograms, we notices except for the variable log_pop, right-skewed problems of four variables mentioned before has been solved.
+
+## relationship of two variables (pairs)
+
+```{r fig.width=10,fig.height=10}
+pair_df=
+  data_df
+    
+pairs(data_df)
+
+```
+
+As shown in scatter plots,we can find it seems there is a linear relationship between any two of log_pop,log_docs,log_beds and log_totalinc
+
+## Correlation plot
+
+In theory,the correlation between independent variables should be zero.In particular,we expect and are okey with weak to no correlation between independent variables.
+We also expect that independent variables reflect a high correlation with the target variable.
+
+```{r}
+cor_df=
+  data_df %>%
+  dplyr::select(-region) %>% 
+  cor() ## Correlation coefficient
+
+corrplot(cor(cor_df), type = "upper", diag = FALSE)
+```
+
+from the correlaton plot,we can find independent variables like poverty(0.47),UNEMP(0.42),log_docs(0.443),log_beds(0.493) have a high correlation with the target variable log_CRM_1000.
+In addition,we also notice independent variables like log_totalinc,log_beds,log_docs and log_pop have a high correlation with each other.
+
+# Multicollinearity Assessment
+
+Check collinearity. Stepwise variable selection
+
+ResultL:remove four variables:pop,docs,bed and bagrad
+
+A general rule of thumb for variance inflation factor(VIF):
+A value of 1 indicates there is no correlation between a given predictor variable and any other predictor variables in the model.
+A value between 1 and 5 indicates moderate correlation between a given predictor variable and other predictor variables in the model, but this is often not severe enough to require attention.
+A value greater than 5 indicates potentially severe correlation between a given predictor variable and other predictor variables in the model. In this case, the coefficient estimates and p-values in the regression output are likely unreliable.
+
+```{r}
+vif1 = lm(CRM_1000 ~ ., data = data_df)
+summary(vif1)
+vif(vif1) ##  log_totalinc has the highest VIF
+
+
+vif2=lm(CRM_1000 ~.-log_totalinc, data = data_df)
+summary(vif2)
+vif(vif2) ## remove log_totalinc and log_docs has the highest VIF
+
+vif3=lm(CRM_1000 ~.-log_totalinc -log_docs, data = data_df)
+vif(vif3) ## remove log_docs and bagrad has the highest VIF
+
+vif4=lm(CRM_1000 ~ .-log_totalinc -log_docs -bagrad , data = data_df)
+vif(vif4) ## remove bagrad and log_beds has the highest VIF.
+
+vif5=lm(CRM_1000 ~ .-log_totalinc -log_docs -bagrad -log_beds, data = data_df)
+summary(vif5)
+vif(vif5) ## remove log_beds  and remaining variables' VIFs are between 0 to 5 which indicate remaining variables have no multicollinearity. 
+
+
+
+```
+
+Altogether, We remove four variables(log_totalinc,log_docs,bagrad and log_beds ) whose VIFs are higher than 5
+
+```{r}
+data_df=data_df %>% 
+        dplyr::select(-log_totalinc,-log_beds,-log_docs,-bagrad) 
+```
+
+The remaining 9 variables are pop18, pop65, hsgrad, poverty, unemp, pcincome, region, log_area, log_pop
+
+After log transformation and VIF test, we draw a new correlation plotfrom which we find all absoulte correlation coefficients are less than 0.7,indicating the absence of multicollinearity.
+
+```{r}
+cor_df=
+  data_df %>%
+  dplyr::select(-region) %>% 
+  cor() ## Correlation coefficient
+
+
+corrplot(cor(cor_df), type = "upper", diag = FALSE)
+```
+
+
+# stepwise model selection
+
+```{r}
+
+mult.fit = lm(CRM_1000 ~ ., data = data_df)
+
+step(mult.fit, direction = 'forward')
+step(mult.fit, direction = 'backward')
+model = step(mult.fit, direction = 'both')
+
+broom::tidy(model) %>% 
+  knitr::kable(digits = c(2,2,2,2,4))
+```
+
+# Interaction
+
+```{r}
+# model interaction
+model = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop, data = data_df)
+summary(model)
+
+par(mfrow=c(2,2)) ## divide the Plots window into the number of rows and columns specified in the brackets.
+plot(model)
+par(mfrow=c(1,1))  ## show 4 plots simultaneously.plotting one graph in the entire window, set the parameters again and replace the (2,2) with (1,1).
+
+#1
+qplot(x = pop18, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="pop18", y="CRM_1000", color = "region") # not good
+#2
+qplot(x = poverty, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="poverty", y="CRM_1000", color = "region") 
+#3
+qplot(x = pop65, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="pop65", y="CRM_1000", color = "region") #not good
+#4
+qplot(x = log_area, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="log_area", y="CRM_1000", color = "region") 
+
+
+#5
+qplot(x = log_pop, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="log_pop", y="CRM_1000", color = "region") #not good
+
+# model_adj1 = update(model, . ~ . + poverty*region, data=data_df)
+
+model_adj1 = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop+ poverty*region, data = data_df)
+summary(model_adj1)
+anova(model, model_adj1)
+
+model_adj2 = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop +log_pop*region, data = data_df)
+summary(model_adj2)
+anova(model, model_adj2)
+
+# model_adj3 = update(model, . ~ . + poverty*log_pop, data=data_df)
+
+model_adj3 = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop, data = data_df)
+summary(model_adj3)
+anova(model, model_adj3)
+
+```
+
+leave  model, model_adj1, model_adj3
+
+
+# Cross-Validation
+
+```{r}
+train = trainControl(method = "cv", number = 5)
+
+model1 = train(CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop+ poverty*region,
+                   data = data_df,
+                   trControl = train,
+                   method = 'lm',
+                   na.action = na.pass)
+
+model1$finalModel
+print(model1)
+
+
+model3 = train(CRM_1000 ~pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop, 
+                   data = data_df,
+                   trControl = train,
+                   method = 'lm',
+                   na.action = na.pass)
+
+model3$finalModel
+print(model3)
+
+```
+
+
+Model3 is selected with lower RMSE and higher R-square.
+
+
+
+# model diagnostic
+
+## Box-Cox Transformation
+
+```{r}
+# fit model
+fit_adj3 = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop, data = data_df)
+
+# choose best transformation - choosing from lambda in (-3,3)
+boxcox(fit_adj3, lambda = seq(-3, 3, by = 0.25))
+
+# fit multivariate model
+mult.fit_adj3 = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop, data = data_df)
+
+plot(mult.fit_adj3)
+boxcox(mult.fit_adj3)
+```
+
+
+Since the mean is closer to 1/2 in the box-cox plot, we chose square root transformation to create a model with square root values and to compare the model with the original model. In the fit multivariate model, the residual values are normally distributed around 0. In the normal QQ plot, it is linear to a straight line and its residuals are normal.
+
+
+```{r}
+data_sqrt = data_df %>% 
+  mutate(sqrt_CRM_1000 = sqrt(CRM_1000)) %>% 
+  dplyr::select(-CRM_1000) 
+
+# fit multivariate model with square root transform ()
+sqrt_fit_adj3 = lm(sqrt_CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop, data = data_sqrt) 
+
+# check diagnostics
+summary(sqrt_fit_adj3)
+boxcox(sqrt_fit_adj3) 
+
+```
+
+In the box-cox model after square root transformation, the mean is closer to 1.
+
+## Residual vs Fitted & QQ Plots
+
+```{r}
+# fit model
+fit_adj3 = lm(CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop, data = data_df)
+
+# residual vs fitted plot
+plot(fit_adj3, which = 1)
+
+# QQ plot
+plot(fit_adj3, which = 2)
+
+# fit model - log transform the outcome
+fit3 = lm(sqrt_CRM_1000 ~pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop,  data = data_sqrt)
+
+# residual vs fitted plot
+plot(fit3, which = 1)
+
+# QQ plot
+plot(fit3, which = 2)
+```
+
+
+In this part, we showed four plots: fit model with original data, QQ plot of original model, fit model after square root transforms the outcome, and QQ plot of model with square root values. With comparison of two fit models, fit model with original data is better, since it has random pattern, and residual values are evenly distributed around 0. With comparison of two QQ plots, QQ plot of original model is better, since it is more linear to a straight line and its residuals are normal. The outliers of this fit model are also fewer than the fit model with square root values, which shows the fit model with original value is a better model.
+
+
+## Influential Observations (outliers)
+
+To identify the outliers in this model, and check if they are influential, we first plot the residuals vs leverage plots and calculate the Cook’s distance D, which considers the influence of the $i^{th}$ case on all fitted values.
+
+$$
+D_i = \frac{\sum_{j=1}^n(\hat{Y_j}-\hat{Y_{j(i)}})^2}{pMSE}
+$$
+
+Here we regard $D_i > 4/n$ where $n=440$ as a threshold of concern.
+
+### Model 1
+
+```{r}
+# residuals vs leverage plot
+model_adj1$call
+fit1 = lm(CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + 
+    log_pop + poverty * region, data = data_df)
+
+plot(fit1, which = 4)
+
+data_df[c(6,123,128),]
+summary(data_df)
+
+# case 128 has extremely high poverty and high hsgrad (Percent high school graduates)
+boxplot(data_df$poverty)
+boxplot(data_df$hsgrad)
+# case 6 has extremely high CRM rate
+boxplot(data_df$CRM_1000)
+
+# remove influential points
+dataOut = data_df[-c(6,128),]
+
+# plot with and without influential points
+plot(data_df$poverty, data_df$CRM_1000)
+plot(dataOut$poverty, dataOut$CRM_1000)
+
+# fit model with and without influential points
+with1 = lm(CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + 
+    log_pop + poverty * region, data = data_df)
+
+without1 = lm(CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + 
+    log_pop + poverty * region, data = dataOut)
+
+summary(with1); summary(without1) 
+### The model without outliers have higher significancy and R-squared value
+
+# check without diagnostics
+# par(mfrow=c(2,2))
+plot(without1,which=4)
+
+## further elimination
+dataOut[c(123,188,405),]
+# seems normal in all dimension, therefore kept all cases.
+
+par(mfrow=c(2,2))
+plot(without1)
+```
+
+
+### Model 3
+
+```{r}
+# residuals vs leverage plot
+model_adj3$call
+fit2 = lm(CRM_1000 ~pop18 + pop65 + poverty + region + log_area + log_pop +poverty*log_pop, data = data_df)
+
+plot(fit2, which = 4)
+
+data_df[c(6,123,128),]
+summary(data_df)
+
+# case 128 has extremely high poverty
+boxplot(data_df$poverty)
+# case 6 has extremely high CRM rate
+boxplot(data_df$CRM_1000)
+
+# remove influential points
+dataOut = data_df[-c(6,128),]
+
+# plot with and without influential points
+plot(data_df$poverty, data_df$CRM_1000)
+plot(dataOut$poverty, dataOut$CRM_1000)
+
+# fit model with and without influential points
+with3 = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + 
+    log_pop + poverty*log_pop, data = data_df)
+
+without3 = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + 
+    log_pop + poverty*log_pop, data = dataOut)
+
+summary(with3); summary(without3) 
+### The model without outliers have higher significancy and R-squared value
+
+# check without diagnostics
+plot(without3,which=4)
+
+## further elimination
+dataOut[c(123,188,405),]
+# seems normal in all dimension, therefore kept all cases.
+
+par(mfrow=c(2,2))
+plot(without3)
+```
+
+model_adj1 and model_adj3 have same outlier situation.
+
+## Multicolliearity check
+
+```{r}
+model_noint = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + 
+    log_pop, data = dataOut)
+check_collinearity(model_noint)
+```
+
+# Final model
+
+```{r}
+final = lm(formula = CRM_1000 ~ pop18 + pop65 + poverty + region + log_area + 
+    log_pop + +poverty*log_pop, data = dataOut)
+
+terms = c("Residual","Percent of population - aged 18-34","Percent of population - aged 65+", "Percent below poverty level", "Geographic region - North Central","Geographic region - South","Geographic region - West","Log( Land area )","Log( Total population )","Interaction between poverty and total population")
+
+broom::tidy(final) %>% 
+  mutate(term = terms) %>% 
+  arrange(p.value) %>% 
+  knitr::kable(caption = "Final Model Estimates",digits = c(2,2,2,2,4))
+```
+
+# Final Report
+
+The final report of this project is [here](./Report.pdf)

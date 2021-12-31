@@ -1,0 +1,106 @@
+---
+title: "Model Interaction"
+author: "Yu Si"
+date: "12/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+data_df=read.csv("data/cdi.csv") %>% 
+  mutate(CRM_1000=crimes/pop*1000) %>%  
+  select(-crimes,-pop) %>% 
+  select(-id,-cty,-state) %>% 
+  mutate(region=as.factor(region))
+
+# stepwise model selection
+ 
+ mult.fit = lm(CRM_1000 ~ ., data = data_df)
+
+ step(mult.fit, direction = 'both')
+
+
+# modle interaction
+ model = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region, data = data_df)
+summary(model)
+
+
+#ANOVA
+model_inta1 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + poverty*pcincome, data = data_df) 
+summary(model_inta1) # Adjusted R-squared is 0.5333
+
+anova(model, model_inta1)
+#reject Ho, the interaction is superior
+
+
+
+model_1 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    region + poverty:pcincome, data = data_df)
+summary(model_1)
+
+model_inta2 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + docs*pcincome, data = data_df)
+summary(model_inta2) # Adjusted R-squared is 0.5079
+
+step(model_inta2, direction = "both")
+model_2 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + docs * pcincome, data = data_df)
+summary(model_2)
+
+model_inta3 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + pop18*docs, data = data_df) 
+summary(model_inta3) # Adjusted R-squared is 0.4966
+
+model_inta4 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + pop18*poverty, data = data_df) 
+summary(model_inta4) # Adjusted R-squared is 0.4964
+
+model_inta5 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + pop18*pcincome, data = data_df) 
+summary(model_inta5) # Adjusted R-squared is 0.4996
+
+model_inta6 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + pop18*totalinc, data = data_df) 
+summary(model_inta6) # Adjusted R-squared is 0.4964
+
+model_inta7 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + docs*totalinc, data = data_df) 
+summary(model_inta7) # Adjusted R-squared is 0.5173
+
+model_inta8 = lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + pcincome + 
+    totalinc + region + beds*totalinc, data = data_df) 
+summary(model_inta8) # Adjusted R-squared is 0.5203
+
+model_inta =  lm(formula = CRM_1000 ~ pop18 + docs + beds + poverty + log(pcincome) + totalinc + region + poverty*log(pcincome), data = data_df) 
+summary(model_inta)
+
+
+# Is there an interaction between region and other variable?
+qplot(x = beds, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="beds", y="CRM_1000", color = "region") 
+
+qplot(x = pop18, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="beds", y="CRM_1000", color = "region") 
+# not so good
+
+qplot(x = poverty, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="beds", y="CRM_1000", color = "region") 
+
+qplot(x = pcincome, y = CRM_1000, color = factor(region), data = data_df) +
+  geom_smooth(method = "lm", se=FALSE) +
+  theme_bw() +
+  labs(x="beds", y="CRM_1000", color = "region") 
+#not so good.
+```
+

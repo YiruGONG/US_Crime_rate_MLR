@@ -1,0 +1,181 @@
+---
+title: "Model Diagnostics"
+author: "Yiru Gong, Jiaqi Chen"
+date: "12/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+options(encoding='UTF-8')
+
+library(tidyverse)
+library(corrplot)
+library(leaps)
+library(car)
+library(MASS) 
+library(performance) 
+```
+
+# Data Input from Visualization
+
+```{r}
+data_df=read.csv("data/cdi.csv") %>% 
+  mutate(CRM_1000=crimes/pop*1000) %>%  ## add new variable CRM_1000(the crime rate per 1,000 population) 
+  dplyr::select(-crimes, -pop) %>% ## Since new variable CRM_1000=crimes/pop*1000, we do not consider these two variables(crimes and pop) any more
+  dplyr::select(-id) %>% 
+  mutate(region=as.factor(region)) %>% 
+  janitor::clean_names() 
+
+data_df %>% skimr::skim_without_charts()
+
+# data_df = data_df %>% 
+#   select(-docs,-totalinc)
+
+
+data_fit = data_df %>% 
+  dplyr::select(-cty,-state) %>% 
+  mutate(region = as.factor(region))
+```
+
+# Multicollinearity Assessment
+
+My solution to check collinearity. Stepwise variable selection
+ResultL:remove three variables docs,totalinc and bagrad
+
+A general rule of thumb for variance inflation factor(VIF):
+A value of 1 indicates there is no correlation between a given predictor variable and any other predictor variables in the model.
+A value between 1 and 5 indicates moderate correlation between a given predictor variable and other predictor variables in the model, but this is often not severe enough to require attention.
+A value greater than 5 indicates potentially severe correlation between a given predictor variable and other predictor variables in the model. In this case, the coefficient estimates and p-values in the regression output are likely unreliable.
+
+```{r}
+vif2 = lm(crm_1000 ~ ., data = data_fit)
+vif(vif2) ## docs has the highest VIF
+
+
+vif3=lm(crm_1000 ~ area + pop18 + pop65 + beds + hsgrad + bagrad + poverty + unemp + pcincome + totalinc + region, data = data_fit)
+vif(vif3) ## remove docs and totalinc has the highest VIF
+
+vif4=lm(crm_1000 ~ area + pop18 + pop65 + beds + hsgrad + bagrad + poverty + unemp + pcincome  + region, data = data_fit)
+vif(vif4) ## remove totalinc and bagrad has the highest VIF
+
+vif5=lm(crm_1000 ~ area + pop18 + pop65 + beds + hsgrad + poverty + unemp + pcincome  + region, data = data_fit)
+vif(vif5) ## remove bagrad and bagrad has the highest VIF. Remaining variables' VIFs are between 0 to 5. We remove three variables(docs,totalinc and bagrad) which have VIF higher than 5
+
+stargazer(vif2,vif3,vif4,vif5, type = "text",column.labels=c("Model 1 (with all independent variables included)","Model 2 (without docs)","Model 3(without docs and totalinc)","Model 4(without docs,totalinc and bagrad)")) ## plot a table
+```
+Plus, looking at the adjusted R2, which compares four models, we see that the differences are very small, so we did not lose much predictive power in dropping three variables. Rather we have minimized the issue of highly correlated independent variables and thus an inability to tease out the real relationships with our dependent variable of interest.
+
+
+
+# Box-Cox Transformation
+
+```{r}
+# fit model
+fit1 = lm(crm_1000 ~., data = data_fit)
+
+# choose best transformation - choosing from lambda in (-3,3)
+boxcox(fit1, lambda = seq(-3, 3, by = 0.25))
+
+# fit multivariate model
+mult.fit1 = lm(crm_1000 ~., data = data_fit) 
+
+# check diagnostics
+plot(mult.fit1)
+boxcox(mult.fit1)
+```
+
+Since the mean is closer to 1/2 in the box-cox plot, we chose square root transformation to create a model with square root values and to compare the model with the original model. In the fit multivariate model, the residual values are normally distributed around 0. In the normal QQ plot, it is linear to a straight line and its residuals are normal.
+
+```{r}
+data_sqrt = data_fit %>% 
+  mutate(sqrt_crm_1000 = sqrt(crm_1000)) %>% 
+  dplyr::select(-crm_1000) 
+
+# fit multivariate model with square root transform ()
+mult.fit2 = lm(sqrt_crm_1000 ~., data = data_sqrt) 
+
+# check diagnostics
+summary(mult.fit2)
+boxcox(mult.fit2) 
+
+```
+
+In the box-cox model after square root transformation, the mean is closer to 1.
+
+# Residual vs Fitted & QQ Plots
+
+```{r}
+# fit model
+fit1 = lm(crm_1000 ~., data = data_fit)
+
+# residual vs fitted plot
+plot(fit1, which = 1)
+
+# QQ plot
+plot(fit1, which = 2)
+
+# fit model - transform the outcome
+fit2 = lm(sqrt_crm_1000 ~.,  data = data_sqrt)
+
+# residual vs fitted plot
+plot(fit2, which = 1)
+
+# QQ plot
+plot(fit2, which = 2)
+```
+
+In this part, we showed four plots: fit model with original data, QQ plot of original model, fit model after square root transforms the outcome, and QQ plot of model with square root values. With comparison of two fit models, fit model with original data is better, since it has random pattern, and residual values are evenly distributed around 0. With comparison of two QQ plots, QQ plot of original model is better, since it is more linear to a straight line and its residuals are normal. The outliers of this fit model are also fewer than the fit model with square root values, which shows the fit model with original value is a better model.
+
+
+# Influential Observations (outliers)
+
+To identify the outliers in this model, and check if they are influential, we first plot the residuals vs leverage plots and calculate the Cook’s distance D, which considers the influence of the $i^{th}$ case on all fitted values.
+
+$$
+D_i = \frac{\sum_{j=1}^n(\hat{Y_j}-\hat{Y_{j(i)}})^2}{pMSE}
+$$
+
+Here we regard $D_i > 4/n$ where $n=440$ as a threshold of concern.
+
+```{r}
+# multiple regression model
+
+multi.fit = lm(sqrt_crm_1000~.,data = data_sqrt)
+summary(multi.fit)
+
+# residuals vs leverage plot
+plot(multi.fit, which = 4)
+
+data_df[c(1,6,405),]
+summary(data_df)
+```
+
+As we can see, case 1 and 6 have extremely high value of totalinc, docs and beds (which are highly correlated). Case 405 have relatively low value of totalinc instead.
+
+Since they all have high D and correlated with `totalinc`, we can eliminate them together to test their effect.
+
+```{r}
+# remove influential points
+dataOut = data_sqrt[-c(1,6,405),]
+
+# plot with and without influential points
+plot(data_sqrt$totalinc, data_sqrt$sqrt_crm_1000)
+plot(dataOut$totalinc, dataOut$sqrt_crm_1000)
+
+# fit model with and without influential points
+with = lm(sqrt_crm_1000~.,data = data_sqrt) 
+
+without = lm(sqrt_crm_1000~.,data = dataOut)
+
+summary(with); summary(without) 
+### The model without outliers have higher significancy
+
+# check without diagnostics
+par(mfrow=c(2,2))
+plot(without)
+
+```
+
+Here we see that the three outliers would pull down the correlation between `totalinc` and `log_crm_1000` as expected. Therefore, we could confidently delete the three outlier from model.

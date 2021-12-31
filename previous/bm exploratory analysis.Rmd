@@ -1,0 +1,239 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(corrplot)
+library(leaps)
+library(car)
+library(caret)
+library(MASS) 
+library(performance)
+library(psych)
+```
+## Four assumptions associated with a linear regression:
+
+1.Linearity: The relationship between X and the mean of Y is linear.
+
+2.Homoscedasticity: The variance of residual is the same for any value of X.
+                    We can test this assumption later, after fitting the linear model.
+
+3.Independence: Observations are independent of each other.
+
+4.Normality: For any fixed value of X, Y is normally distributed.
+
+# Data import and clean
+
+```{r}
+data_df=read.csv("./data/cdi.csv") %>% 
+  mutate(CRM_1000=crimes/pop*1000) %>%  ## add new variable CRM_1000(the crime rate per 1,000 population)
+  dplyr::select(-crimes) %>% 
+  dplyr::select(-id,-cty,-state) %>% 
+  mutate(region=as.factor(region))
+
+```
+
+## TWO tables of 14  variables
+
+```{r}
+numeric_variable_tb=tibble(Variable=c("area","pop","pop18","pop65","docs","beds","hsgrad","bagrad","poverty","unemp","pcincome","totalinc","CRM_1000"),
+                   mean=c(1041,393011,28.6,12.2,988,1459,77.6,21.1,8.72,6.60,18561,7869,57.3),
+                   sd=c(1550,601987,4.19,3.99,1790,2289,7.02,7.65,4.66,2.34,4059,12884,27.3)) %>%knitr::kable(digit=2,caption="A Table for Numeric Variables")
+
+factor_variable_tb=tibble(region=c("1 ( Northeast )","2 ( North central )","3 ( South )","4 ( West )"),
+                          Frequency=c(103,108,152,77)) %>% knitr::kable(caption="A Frequency Table")
+  
+  
+
+
+
+numeric_variable_tb
+factor_variable_tb
+## describe(data_df)
+```
+## distribution of target variable and log transformation for target variable.AT last,we generate a new variable log_CRM_1000 which is approximated to normal distribution
+```{r}
+hist(data_df$CRM_1000,xlab="CRM_1000",main="Distribution of Target Variable")  ## right-skewed so we use log transformation for target variable
+data_df=data_df %>% 
+  mutate(log_CRM_1000=log(CRM_1000)) %>% 
+  dplyr::select(-CRM_1000)
+hist(data_df$log_CRM_1000,,xlab="log_CRM_1000",main="Distribution of Target Variable")## bell-sharped so log transformation for target variable is perfect
+
+```
+
+
+
+
+
+## Checking outliers using boxplots
+
+boxplot for each continuous variable
+
+```{r}
+par(mfrow=c(3,3))
+boxplot(data_df$area,main='Land area measured in square miles')
+
+boxplot(data_df$pop,main='Total population in 1990')
+
+boxplot(data_df$pop18,main='Percent of population aged 18-34')
+
+boxplot(data_df$pop65,main='Percent of populationß aged 65+')
+
+boxplot(data_df$docs,main='Number of active physicians')
+
+boxplot(data_df$beds,main='Number of hospital beds')
+
+
+boxplot(data_df$hsgrad,main='Percent high school graduates')
+
+boxplot(data_df$bagrad,main='Percent bachelor’s degrees')
+
+boxplot(data_df$poverty,main='Percent of 1990 total population with income below poverty level')
+
+par(mfrow=c(2,2))
+boxplot(data_df$unemp,main='Percent below poverty level')
+
+boxplot(data_df$pcincome,main='Per capita income')
+
+boxplot(data_df$totalinc,main='Total personal income')
+
+boxplot(data_df$log_CRM_1000,main='Log of the crime rate per 1,000 population')
+
+
+
+```
+
+## histogram(distribution of 12 independent numeric variables)
+
+```{r}
+data_without_region_df=
+  data_df %>% dplyr::select(-region,-log_CRM_1000) ## since histogram cannot be plotted using a factor variable, we delete the variable region. 
+
+par(mfrow=c(4,3))
+
+for (n in 1:ncol(data_without_region_df)){
+  var = names(data_without_region_df)[n]
+  hist(data_without_region_df[,n],xlab = var,main=str_c("Distribution of"," variabe ",var))
+}
+
+```
+from 12 histograms of each numeric variable, we notice the distribution of 5 histograms are right-skewed, therefore, we need to perform log transformation for these five variables(area,pop,docs,beds and totalinc)
+
+## log transformation for five variables whose distribution is right-skewed 
+```{r}
+data_df = data_df %>% 
+  mutate(log_area = log(area),
+         log_pop = log(pop),
+         log_docs = log(docs),
+         log_beds = log(beds),
+         log_totalinc = log(totalinc)
+         ) %>% 
+  dplyr::select(-pop,-area,-docs,-beds,-totalinc) 
+```
+
+## Re-check distribution of independent variables
+```{r}
+data_without_region_log_CRM1000_df=
+  data_df %>% dplyr::select(-region,-log_CRM_1000)
+
+## histogram after transformation
+par(mfrow=c(4,3))
+for (n in 1:ncol(data_without_region_log_CRM1000_df)){
+  var = names(data_without_region_log_CRM1000_df[n])
+  hist(data_without_region_log_CRM1000_df[,n],xlab = var,main=str_c("Distribution of"," variabe ",var))
+}
+
+```
+
+After log transformation, in histograms, we notices except for the variable log_pop, right-skewed problems of four variables mentioned before has been solved.
+
+## relationship of two variables(pairs)
+
+```{r}
+pair_df=
+  data_df
+    
+pairs(data_df)
+
+```
+
+As shown in scatter plots,we can find it seems there is a linear relationship between any two of log_pop,log_docs,log_beds and log_totalinc
+
+## Correlation plot
+
+In theory,the correlation between independent variables should be zero.In particular,we expect and are okey with weak to no correlation between independent variables.
+We also expect that independent variables reflect a high correlation with the target variable.
+
+```{r}
+cor_df=
+  data_df %>%
+  dplyr::select(-region) %>% 
+  cor() ## Correlation coefficient
+
+require(corrgram)
+corrgram(data_df, order=TRUE)
+
+corrplot(cor(cor_df), type = "upper", diag = FALSE)
+```
+
+from the correlaton plot,we can find independent variables like poverty(0.423),log_docs(0.423),log_beds(0.464) have a high correlation with the target variable log_CRM_1000.
+In addition,we also notice independent variables like log_totalinc,log_beds,log_docs and log_pop have a high correlation with each other.
+
+# Multicollinearity Assessment
+
+Check collinearity. Stepwise variable selection
+ResultL:remove four variables:pop,docs,bed and bagrad
+
+A general rule of thumb for variance inflation factor(VIF):
+A value of 1 indicates there is no correlation between a given predictor variable and any other predictor variables in the model.
+A value between 1 and 5 indicates moderate correlation between a given predictor variable and other predictor variables in the model, but this is often not severe enough to require attention.
+A value greater than 5 indicates potentially severe correlation between a given predictor variable and other predictor variables in the model. In this case, the coefficient estimates and p-values in the regression output are likely unreliable.
+```{r}
+vif1 = lm(log_CRM_1000 ~ ., data = data_df)
+summary(vif1)
+vif(vif1) ##  log_totalinc has the highest VIF
+
+
+vif2=lm(log_CRM_1000 ~.-log_totalinc, data = data_df)
+summary(vif2)
+vif(vif2) ## remove log_totalinc and log_pop has the highest VIF
+
+vif3=lm(log_CRM_1000 ~.-log_totalinc -log_pop, data = data_df)
+vif(vif3) ## remove log_pop and log_docs has the highest VIF
+
+vif4=lm(log_CRM_1000 ~ .-log_totalinc -log_pop -log_docs , data = data_df)
+vif(vif4) ## remove log_docs and bagrad has the highest VIF.
+
+vif5=lm(log_CRM_1000 ~ .-log_totalinc -log_pop -log_docs -bagrad, data = data_df)
+summary(vif5)
+vif(vif5) ## remove bagrad  and remaining variables' VIFs are between 0 to 5 which indicate remaining variables have no multicollinearity. 
+
+
+
+```
+
+## Altogether, We remove four variables(log_totalinc,log_pop ,log_docs and bagrad ) whose VIFs are higher than 5
+```{r}
+data_df=data_df %>% 
+        dplyr::select(-log_totalinc,-log_pop,-log_docs,-bagrad) 
+```
+
+The remaining 9 variables are pop18, pop65, hsgrad, poverty, unemp, pcincome, region, log_area, log_beds
+
+## After log transformation and VIF test, we draw a new correlation plotfrom which we find all absoulte correlation coefficients are less than 0.7,indicating the absence of multicollinearity.
+```{r}
+cor_df=
+  data_df %>%
+  dplyr::select(-region) %>% 
+  cor() ## Correlation coefficient
+
+
+corrplot(cor(cor_df), type = "upper", diag = FALSE)
+```
+
+
+Above is revised  by Jie Liu. data_df has been dealt with well, use it directly.
